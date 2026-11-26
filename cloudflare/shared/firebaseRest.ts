@@ -22,6 +22,13 @@ const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_SERVICE_SCOPES =
   'https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/identitytoolkit';
 
+function resolveBoundFetch(customFetch?: typeof fetch): typeof fetch {
+  if (!customFetch || customFetch === globalThis.fetch) {
+    return (...args: Parameters<typeof fetch>) => globalThis.fetch(...args);
+  }
+  return (...args: Parameters<typeof fetch>) => customFetch(...args);
+}
+
 export type FirebaseAdminConfigIssueReason =
   | 'missing_env'
   | 'incomplete_env'
@@ -433,7 +440,7 @@ function parseMaxAgeFromCacheControl(headerValue: string | null): number {
 
 async function getFirebasePublicJwk(
   kid: string,
-  fetchFn: typeof fetch = fetch,
+  fetchFn?: typeof fetch,
   nowMs: number = Date.now()
 ): Promise<JsonWebKey | null> {
   if (jwksCache && nowMs < jwksCache.expiresAtMs) {
@@ -441,7 +448,8 @@ async function getFirebasePublicJwk(
     if (cachedKey) return cachedKey;
   }
 
-  const res = await fetchFn(FIREBASE_JWKS_URL, { method: 'GET' });
+  const safeFetch = resolveBoundFetch(fetchFn);
+  const res = await safeFetch(FIREBASE_JWKS_URL, { method: 'GET' });
   if (!res.ok) {
     throw new Error(`No se pudieron obtener las claves públicas de Google JWKS (HTTP ${res.status}).`);
   }
@@ -585,7 +593,7 @@ export async function verifyUserTokenStrict(
   }
 
   try {
-    const fetchFn = options.fetchFn || fetch;
+    const fetchFn = resolveBoundFetch(options.fetchFn);
     const jwk = await getFirebasePublicJwk(header.kid, fetchFn, nowMs);
     if (!jwk) {
       return {
@@ -673,10 +681,11 @@ export function clearOAuthTokenCacheForTests(): void {
 
 export async function getGoogleAccessToken(
   credentials: ParsedServiceAccount,
-  fetchFn: typeof fetch = fetch,
+  fetchFn?: typeof fetch,
   nowMs: number = Date.now(),
   scope: string = GOOGLE_SERVICE_SCOPES
 ): Promise<string> {
+  const safeFetch = resolveBoundFetch(fetchFn);
   const cacheKey = `${credentials.projectId}|${credentials.clientEmail}|${scope}`;
   const cached = oauthTokenCache.get(cacheKey);
   if (cached && nowMs < cached.expiresAtMs) {
@@ -723,7 +732,7 @@ export async function getGoogleAccessToken(
   const assertion = `${unsigned}.${bytesToBase64Url(new Uint8Array(sigBuf))}`;
 
   const body = `grant_type=${encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer')}&assertion=${encodeURIComponent(assertion)}`;
-  const res = await fetchFn(GOOGLE_OAUTH_TOKEN_URL, {
+  const res = await safeFetch(GOOGLE_OAUTH_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body
@@ -865,10 +874,10 @@ export class FirestoreRestClient {
   private readonly documentsBaseUrl: string;
   private readonly databaseDocPrefix: string;
 
-  constructor(credentials: ParsedServiceAccount, fetchFn: typeof fetch = fetch) {
+  constructor(credentials: ParsedServiceAccount, fetchFn?: typeof fetch) {
     this.credentials = credentials;
     this.projectId = credentials.projectId;
-    this.fetchFn = fetchFn;
+    this.fetchFn = resolveBoundFetch(fetchFn);
     this.databaseDocPrefix = `projects/${this.projectId}/databases/(default)/documents`;
     this.documentsBaseUrl = `https://firestore.googleapis.com/v1/${this.databaseDocPrefix}`;
   }
@@ -886,14 +895,15 @@ export class FirestoreRestClient {
     url: string,
     init: RequestInit
   ): Promise<{ status: number; data: any }> {
-    const token = await getGoogleAccessToken(this.credentials, this.fetchFn);
+    const safeFetch = this.fetchFn;
+    const token = await getGoogleAccessToken(this.credentials, safeFetch);
     const headers = new Headers(init.headers || {});
     headers.set('Authorization', `Bearer ${token}`);
     if (init.body && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
     }
 
-    const res = await this.fetchFn(url, { ...init, headers });
+    const res = await safeFetch(url, { ...init, headers });
     const text = await res.text();
     let data: any = {};
     if (text) {
@@ -1142,7 +1152,7 @@ export class FirestoreRestClient {
 
 export function createFirestoreRestClient(
   env: CloudflareEnv = {},
-  fetchFn: typeof fetch = fetch
+  fetchFn?: typeof fetch
 ): FirestoreRestClient {
   const diag = inspectFirebaseAdminConfig(env);
   if (!diag.ok || !diag.credentials) {
@@ -1165,7 +1175,7 @@ export function isNonAnonymousFirebaseToken(claims?: Record<string, any> | null)
 export async function deleteFirebaseAuthUser(
   env: CloudflareEnv = {},
   uid: string,
-  fetchFn: typeof fetch = fetch
+  fetchFn?: typeof fetch
 ): Promise<{ deleted: boolean; pendingConfig?: boolean; error?: string }> {
   const cleanUid = String(uid || '').trim();
   if (!cleanUid) {
@@ -1182,12 +1192,13 @@ export async function deleteFirebaseAuthUser(
   }
 
   try {
-    const token = await getGoogleAccessToken(diag.credentials, fetchFn);
+    const safeFetch = resolveBoundFetch(fetchFn);
+    const token = await getGoogleAccessToken(diag.credentials, safeFetch);
     const endpoint = `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(
       diag.credentials.projectId
     )}/accounts:delete`;
 
-    const res = await fetchFn(endpoint, {
+    const res = await safeFetch(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
