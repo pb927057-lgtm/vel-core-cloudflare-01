@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // 1. IDENTIDAD TÉCNICA, VINCULACIONES Y AUTORIZACIONES (CORE ↔ MÓVIL)
+    // Todas las escrituras sensibles se ejecutan exclusivamente en Netlify
+    // Functions mediante Firebase Admin SDK. El cliente no puede crear, alterar
+    // ni borrar autorizaciones o dispositivos ajenos.
+    // =========================================================================
+
+    match /dispositivos/{deviceId} {
+      allow get: if request.auth != null
+                    && resource.data.authUid == request.auth.uid;
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    match /vinculaciones/{linkId} {
+      allow get: if request.auth != null
+                    && (resource.data.coreAuthUid == request.auth.uid
+                        || resource.data.terminalAuthUid == request.auth.uid);
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    match /autorizaciones/{authorizationId} {
+      allow get: if request.auth != null
+                    && (resource.data.coreAuthUid == request.auth.uid
+                        || resource.data.terminalAuthUid == request.auth.uid);
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // =========================================================================
+    // 2. SISTEMA COMERCIAL Y LEGAL (SUSCRIPCIONES Y CONTRATOS)
+    // =========================================================================
+
+    // Colección: suscriptores/{uid}
+    match /suscriptores/{uid} {
+      // 1. Lectura: Solo el usuario autenticado puede leer su propio documento
+      allow get: if request.auth != null && request.auth.uid == uid;
+
+      // Impedir que un usuario liste o consulte documentos de otros suscriptores
+      allow list: if false;
+
+      // 2. Creación inicial: Solo el usuario autenticado (no anónimo) puede crear su ficha comercial si:
+      // - El UID del documento coincide con su auth.uid
+      // - El email coincide con el email de su token
+      // - El estado inicial es estrictamente "pendiente_pago"
+      // - El plan y fecha de vencimiento son inicialmente null
+      // - No se admiten campos adicionales no autorizados (exactamente los 6 campos definidos)
+      allow create: if request.auth != null
+                    && request.auth.token.firebase.sign_in_provider != 'anonymous'
+                    && request.auth.uid == uid
+                    && request.resource.data.keys().hasOnly(['uid', 'email', 'estado', 'plan', 'fechaAlta', 'venceEl'])
+                    && request.resource.data.keys().hasAll(['uid', 'email', 'estado', 'plan', 'fechaAlta', 'venceEl'])
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.email == request.auth.token.email
+                    && request.resource.data.estado == 'pendiente_pago'
+                    && request.resource.data.plan == null
+                    && request.resource.data.venceEl == null
+                    && request.resource.data.fechaAlta == request.time;
+
+      // 3. Modificación y eliminación: Prohibidas desde el cliente.
+      // Quedan reservadas exclusivamente para procesos de backend confiable (Netlify Admin SDK).
+      allow update, delete: if false;
+
+      // 4. Subcolección inmutable de historial: suscriptores/{uid}/historial_contratos/{versionId}
+      match /historial_contratos/{versionId} {
+        allow get: if request.auth != null && request.auth.uid == uid;
+        allow list: if request.auth != null && request.auth.uid == uid;
+        allow create: if request.auth != null
+                      && request.auth.token.firebase.sign_in_provider != 'anonymous'
+                      && request.auth.uid == uid
+                      && versionId in ['1.0-draft', '1.2']
+                      && request.resource.data.keys().hasOnly(['uid', 'versionContrato', 'urlContrato', 'aceptado', 'fechaAceptacion'])
+                      && request.resource.data.keys().hasAll(['uid', 'versionContrato', 'urlContrato', 'aceptado', 'fechaAceptacion'])
+                      && request.resource.data.uid == request.auth.uid
+                      && request.resource.data.aceptado == true
+                      && request.resource.data.versionContrato == versionId
+                      && request.resource.data.urlContrato == 'https://proyecto-vel.blogspot.com/2026/11/terminos-y-condiciones-y-contrato-de-uso.html'
+                      && request.resource.data.fechaAceptacion == request.time
+                      && !(request.auth.token.email in ['soporte@vel.com', 'admin@vel.com', 'pb927057@gmail.com']);
+        allow update, delete: if false;
+      }
+    }
+
+    // Colección: aceptaciones_contrato/{uid}
+    match /aceptaciones_contrato/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow list: if false;
+      allow create: if request.auth != null
+                    && request.auth.token.firebase.sign_in_provider != 'anonymous'
+                    && request.auth.uid == uid
+                    && request.resource.data.keys().hasOnly(['uid', 'versionContrato', 'urlContrato', 'aceptado', 'fechaAceptacion'])
+                    && request.resource.data.keys().hasAll(['uid', 'versionContrato', 'urlContrato', 'aceptado', 'fechaAceptacion'])
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.aceptado == true
+                    && request.resource.data.versionContrato in ['1.0-draft', '1.2']
+                    && request.resource.data.urlContrato == 'https://proyecto-vel.blogspot.com/2026/11/terminos-y-condiciones-y-contrato-de-uso.html'
+                    && request.resource.data.fechaAceptacion == request.time
+                    && !(request.auth.token.email in ['soporte@vel.com', 'admin@vel.com', 'pb927057@gmail.com']);
+      allow update, delete: if false;
+    }
+
+    // Cualquier otra colección (incluyendo configuracion_comercial, preferencias_pago,
+    // pagos_procesados y webhook_events) queda denegada al cliente por defecto.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

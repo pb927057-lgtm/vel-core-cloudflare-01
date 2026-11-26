@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#0B1220"/>
+  <!-- Escudo exterior protector -->
+  <path d="M256 72 L416 132 C416 292 344 388 256 440 C168 388 96 292 96 132 Z" fill="#111C2E" stroke="#00CFE8" stroke-width="12" stroke-linejoin="round"/>
+  <!-- Letra V minimalista con línea luminosa cyan conectando los puntos -->
+  <path d="M184 196 L256 348 L328 196" fill="none" stroke="#00CFE8" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Puntos luminosos de conexión -->
+  <circle cx="184" cy="196" r="16" fill="#00CFE8" />
+  <circle cx="328" cy="196" r="16" fill="#00CFE8" />
+  <circle cx="256" cy="348" r="20" fill="#10B981" />
+  <circle cx="256" cy="348" r="8" fill="#FFFFFF" />
+</svg>

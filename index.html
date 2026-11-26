@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VEL — Sistema de Protección Criptográfica E2EE</title>
+    <meta name="description" content="Aplicación de seguridad y protección de la información con dos dispositivos (VEL CORE y VEL MÓVIL), cifrado E2EE AES-GCM, WebSockets autenticados y custodia local." />
+    <meta property="og:title" content="VEL — Sistema de Protección Criptográfica E2EE" />
+    <meta property="og:description" content="Aplicación de seguridad y protección de la información con dos dispositivos (VEL CORE y VEL MÓVIL), cifrado E2EE AES-GCM, WebSockets autenticados y custodia local." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- PWA Configuration -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0B1220" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="VEL" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        (function configureVelServiceWorker() {
+          const hostname = (window.location.hostname || '').toLowerCase();
+          const hasViteDevMarkers = Boolean(
+            document.querySelector('script[src*="/@vite/client"], script[src="/src/main.tsx"]')
+          );
+          const isDevOrPreviewHost =
+            hostname === 'localhost' ||
+            hostname === '127.0.0.1' ||
+            hostname === '[::1]' ||
+            /^ais-(dev|pre)-.*\.run\.app$/i.test(hostname) ||
+            hostname.endsWith('.scf.usercontent.goog');
+          const isDevOrPreviewEnv = hasViteDevMarkers || isDevOrPreviewHost;
+
+          if (isDevOrPreviewEnv) {
+            window.__velSwRegistration = undefined;
+            const RELOAD_GUARD_KEY = 'vel_preview_sw_cleaned';
+            const hadController = Boolean(navigator.serviceWorker.controller);
+
+            const getRegistrationsSafe = async () => {
+              if (typeof navigator.serviceWorker.getRegistrations === 'function') {
+                return navigator.serviceWorker.getRegistrations();
+              }
+              if (typeof navigator.serviceWorker.getRegistration === 'function') {
+                const reg = await navigator.serviceWorker.getRegistration();
+                return reg ? [reg] : [];
+              }
+              return [];
+            };
+
+            const cleanupPreviewServiceWorker = async () => {
+              let unregisteredCount = 0;
+
+              try {
+                const registrations = await getRegistrationsSafe();
+                for (const reg of registrations) {
+                  const scriptUrl =
+                    (reg.active && reg.active.scriptURL) ||
+                    (reg.waiting && reg.waiting.scriptURL) ||
+                    (reg.installing && reg.installing.scriptURL) ||
+                    '';
+                  const isVelSw = !scriptUrl || scriptUrl.includes('/sw.js');
+                  if (isVelSw) {
+                    const ok = await reg.unregister().catch(() => false);
+                    if (ok) unregisteredCount += 1;
+                  }
+                }
+              } catch {
+                // Ignorar errores de acceso a getRegistrations en contextos restringidos
+              }
+
+              if ('caches' in window) {
+                try {
+                  const cacheNames = await caches.keys();
+                  const velCacheNames = cacheNames.filter((name) =>
+                    /^vel-static-cache-/i.test(name)
+                  );
+                  await Promise.all(velCacheNames.map((name) => caches.delete(name)));
+                } catch {
+                  // Ignorar errores de acceso a CacheStorage
+                }
+              }
+
+              if (hadController || unregisteredCount > 0) {
+                let alreadyReloaded = false;
+                try {
+                  alreadyReloaded = sessionStorage.getItem(RELOAD_GUARD_KEY) === '1';
+                  if (!alreadyReloaded) {
+                    sessionStorage.setItem(RELOAD_GUARD_KEY, '1');
+                  }
+                } catch {
+                  // Si sessionStorage está bloqueado, solo recargar cuando existía controller activo
+                  alreadyReloaded = !hadController;
+                }
+                if (!alreadyReloaded) {
+                  window.location.reload();
+                }
+              } else {
+                try {
+                  sessionStorage.removeItem(RELOAD_GUARD_KEY);
+                } catch {
+                  // Sin acción si sessionStorage no está disponible
+                }
+              }
+            };
+
+            cleanupPreviewServiceWorker();
+            return;
+          }
+
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' })
+              .then((reg) => {
+                window.__velSwRegistration = reg;
+                reg.addEventListener('updatefound', () => {
+                  const newWorker = reg.installing;
+                  if (!newWorker) return;
+                  newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                      window.dispatchEvent(new CustomEvent('vel-sw-update-ready', { detail: { registration: reg } }));
+                    }
+                  });
+                });
+                document.addEventListener('visibilitychange', () => {
+                  if (document.visibilityState === 'visible') {
+                    reg.update().catch(() => {});
+                  }
+                });
+              })
+              .catch((err) => {
+                console.warn('Registro de Service Worker:', err);
+              });
+          });
+        })();
+      }
+    </script>
+  </body>
+</html>
+

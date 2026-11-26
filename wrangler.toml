@@ -1,0 +1,7 @@
+name = "proyecto-vel"
+compatibility_date = "2025-05-01"
+pages_build_output_dir = "dist"
+
+# Configurar las variables de entorno y secretos en Cloudflare Pages > Settings > Variables and Secrets
+# para ambos entornos (Production y Preview). No se declara [vars] aquí para evitar sobrescribir
+# variables configuradas desde el panel de Cloudflare Pages durante el despliegue.

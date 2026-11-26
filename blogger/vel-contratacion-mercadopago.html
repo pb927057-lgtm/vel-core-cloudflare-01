@@ -1,0 +1,1065 @@
+<!--
+  VEL 0.1 — Bloque HTML/JS oficial para Blogger (https://proyecto-vel.blogspot.com)
+  Arquitectura oficial:
+  1. El usuario inicia sesión en Blogger con la MISMA identidad de Firebase Authentication usada por VEL PWA (sin cuentas duplicadas).
+  2. El portal sincroniza el alta en Cloudflare (/api/account), consulta la tarifa vigente (/api/get-pricing) y lista sus dispositivos técnicos vinculados.
+  3. Lee el Contrato de Uso VEL (versión 1.2), marca la casilla de aceptación expresa y pulsa "ACEPTO Y CONTINUAR".
+  4. Se registra la aceptación en Firebase Firestore (usuario, versión 1.2 y fecha/hora del servidor). Si falla el registro, NO se redirige a Mercado Pago.
+  5. Solo tras confirmar el registro en Firebase, solicita /api/create-preference en Cloudflare Pages y redirige a Mercado Pago Checkout Pro.
+  6. Este portal consulta /api/download-package?format=json y habilita el botón "Entrar a VEL" (PWA en Cloudflare Pages).
+  7. Permite solicitar la baja de la cuenta (DELETE /api/account) propagando cancelación comercial y revocación de dispositivos, sin borrar copias locales en VEL CORE.
+-->
+<div id="vel-portal-oficial-blogger"
+     style="max-width:540px;margin:20px auto;font-family:system-ui,-apple-system,sans-serif;color:#111827;">
+
+  <!-- Bloque 0: Sesión única de Firebase Authentication (misma identidad que la app VEL) -->
+  <div id="vel-cuenta-box"
+       style="margin-bottom:16px;padding:20px;border:1px solid #cbd5e1;border-radius:12px;background:#0b1220;color:#f1f5f9;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:#00cfe8;text-transform:uppercase;">
+        Cuenta VEL · Identidad única
+      </span>
+      <span id="vel-cuenta-badge"
+            style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;background:rgba(148,163,184,0.16);color:#cbd5e1;">
+        Verificando
+      </span>
+    </div>
+
+    <div id="vel-pago-usuario-estado"
+         style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:#111c2e;border:1px solid #22324c;font-size:13px;color:#cbd5e1;">
+      Verificando sesión de Firebase en el portal...
+    </div>
+
+    <!-- Formulario de acceso sin contraseña (Email Link de Firebase) cuando no hay sesión -->
+    <form id="vel-auth-form-box" style="display:none;margin-bottom:8px;">
+      <label for="vel-auth-email-input"
+             style="display:block;font-size:12px;font-weight:600;color:#cbd5e1;margin-bottom:6px;">
+        Ingresa tu correo electrónico para iniciar sesión o registrarte (sin contraseña):
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input id="vel-auth-email-input"
+               type="email"
+               required
+               autocomplete="email"
+               placeholder="tu-correo@ejemplo.com"
+               style="flex:1;min-width:200px;padding:10px 12px;border-radius:8px;border:1px solid #334155;background:#111c2e;color:#ffffff;font-size:14px;outline:none;" />
+        <button id="vel-btn-send-link"
+                type="submit"
+                style="padding:10px 14px;border:none;border-radius:8px;background:#00cfe8;color:#0b1220;font-size:13px;font-weight:800;cursor:pointer;">
+          Enviar enlace de acceso
+        </button>
+      </div>
+      <div id="vel-auth-info"
+           style="display:none;margin-top:10px;padding:9px 11px;border-radius:8px;background:#0f2937;border:1px solid #0891b2;color:#a5f3fc;font-size:12px;line-height:1.45;">
+      </div>
+      <div id="vel-auth-error"
+           style="display:none;margin-top:10px;padding:9px 11px;border-radius:8px;background:#450a0a;border:1px solid #ef4444;color:#fecaca;font-size:12px;line-height:1.45;">
+      </div>
+    </form>
+
+    <!-- Panel de resumen y baja cuando hay sesión iniciada -->
+    <div id="vel-cuenta-resumen-box" style="display:none;">
+      <div id="vel-cuenta-dispositivos"
+           style="margin-bottom:10px;padding:10px 12px;border-radius:8px;background:#111c2e;border:1px solid #22324c;font-size:12px;line-height:1.5;color:#cbd5e1;">
+        Cargando dispositivos vinculados...
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;align-items:center;">
+        <button id="vel-btn-cerrar-sesion"
+                type="button"
+                style="padding:8px 12px;border:1px solid #334155;border-radius:8px;background:#18263e;color:#e2e8f0;font-size:12px;font-weight:600;cursor:pointer;">
+          Cerrar sesión
+        </button>
+        <button id="vel-btn-toggle-baja"
+                type="button"
+                style="padding:8px 12px;border:1px solid #7f1d1d;border-radius:8px;background:transparent;color:#fca5a5;font-size:12px;font-weight:600;cursor:pointer;">
+          Dar de baja mi cuenta
+        </button>
+      </div>
+
+      <div id="vel-baja-confirm-box"
+           style="display:none;margin-top:12px;padding:12px;border-radius:8px;background:#2a1215;border:1px solid #ef4444;color:#fecaca;font-size:12px;line-height:1.5;">
+        <strong style="display:block;color:#ffffff;margin-bottom:4px;">Confirmar baja definitiva de la cuenta VEL</strong>
+        <p style="margin:0 0 8px 0;">
+          Al dar de baja tu cuenta: se cancelará cualquier suscripción recurrente activa en Mercado Pago, se revocarán tus dispositivos vinculados en el servidor y se eliminará tu acceso. Las copias guardadas localmente en tu teléfono <strong>VEL CORE</strong> permanecerán intactas en ese teléfono.
+        </p>
+        <label for="vel-baja-confirm-input" style="display:block;margin-bottom:6px;color:#ffffff;font-weight:600;">
+          Escribe exactamente <strong>ELIMINAR CUENTA</strong> para confirmar:
+        </label>
+        <input id="vel-baja-confirm-input"
+               type="text"
+               autocomplete="off"
+               placeholder="ELIMINAR CUENTA"
+               style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid #ef4444;background:#111c2e;color:#ffffff;font-size:13px;margin-bottom:8px;outline:none;" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="vel-btn-confirmar-baja"
+                  type="button"
+                  style="flex:1;padding:10px 12px;border:none;border-radius:8px;background:#dc2626;color:#ffffff;font-size:12px;font-weight:800;cursor:pointer;">
+            Confirmar baja definitiva
+          </button>
+          <button id="vel-btn-cancelar-baja"
+                  type="button"
+                  style="padding:10px 12px;border:1px solid #334155;border-radius:8px;background:#18263e;color:#e2e8f0;font-size:12px;font-weight:600;cursor:pointer;">
+            Cancelar
+          </button>
+        </div>
+        <div id="vel-baja-feedback"
+             style="display:none;margin-top:8px;font-size:12px;color:#fde68a;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bloque 1: Aceptación expresa del Contrato v1.2 y Contratación / Renovación (Mercado Pago Checkout Pro 30 días) -->
+  <div id="vel-pago-manual-box"
+       data-vel-base="https://proyecto-vel.pages.dev/"
+       style="margin-bottom:16px;padding:20px;border:1px solid #d1d5db;border-radius:12px;background:#ffffff;color:#111827;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.05em;color:#0284c7;text-transform:uppercase;">
+        Paso 1 · Suscripción VEL (30 días)
+      </span>
+      <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;background:#eff6ff;color:#1d4ed8;">
+        Contrato v1.2
+      </span>
+    </div>
+
+    <h3 style="margin:0 0 8px 0;font-size:18px;font-weight:700;">
+      Contratar o renovar VEL
+    </h3>
+    <p id="vel-precio-linea" style="margin:0 0 14px 0;font-size:14px;line-height:1.5;color:#4b5563;">
+      Abona tu mes con Mercado Pago (tarjeta, saldo, Rapipago o Pago Fácil). Antes de ir al pago, debes leer y aceptar expresamente el Contrato de Uso VEL versión 1.2.
+    </p>
+
+    <div id="vel-contrato-box"
+         style="margin-bottom:14px;padding:12px 14px;border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;">
+      <div style="font-size:12px;font-weight:700;color:#0f172a;margin-bottom:6px;">
+        Contrato de Uso VEL — Versión 1.2
+      </div>
+      <div style="margin-bottom:10px;">
+        <a id="vel-link-contrato-completo"
+           href="https://proyecto-vel.blogspot.com/2026/11/terminos-y-condiciones-y-contrato-de-uso.html"
+           target="_blank"
+           rel="noopener noreferrer"
+           style="font-size:13px;font-weight:600;color:#0284c7;text-decoration:underline;">
+          Leer el Contrato de Uso y Términos y Condiciones completos (versión 1.2)
+        </a>
+      </div>
+      <label for="vel-chk-contrato-v12"
+             style="display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.45;color:#1e293b;cursor:pointer;">
+        <input id="vel-chk-contrato-v12"
+               type="checkbox"
+               autocomplete="off"
+               style="margin-top:3px;width:16px;height:16px;flex-shrink:0;cursor:pointer;" />
+        <span>
+          He leído y acepto expresamente el <strong>Contrato de Uso VEL versión 1.2</strong> y sus Términos y Condiciones.
+        </span>
+      </label>
+    </div>
+
+    <button id="vel-btn-contratar-mp"
+            type="button"
+            disabled
+            style="width:100%;padding:12px 16px;border:none;border-radius:8px;background:#009ee3;color:#ffffff;font-size:15px;font-weight:700;letter-spacing:0.02em;cursor:not-allowed;opacity:0.65;">
+      ACEPTO Y CONTINUAR
+    </button>
+
+    <div id="vel-pago-error"
+         role="alert"
+         style="display:none;margin-top:12px;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px;line-height:1.4;">
+    </div>
+  </div>
+
+  <!-- Bloque 2: Acceso y Descarga de la App (se habilita automáticamente cuando Firebase confirma el mes pago) -->
+  <div id="vel-acceso-pwa-box"
+       style="padding:20px;border:1px solid #0891b2;border-radius:12px;background:#0b1220;color:#f1f5f9;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+      <span style="font-size:12px;font-weight:700;letter-spacing:0.06em;color:#00cfe8;text-transform:uppercase;">
+        Paso 2 · Abrir / Instalar VEL
+      </span>
+      <span id="vel-acceso-badge"
+            style="font-size:11px;padding:2px 8px;border-radius:6px;background:rgba(148,163,184,0.16);color:#cbd5e1;font-weight:600;">
+        Verificando
+      </span>
+    </div>
+
+    <h3 style="margin:0 0 8px 0;font-size:19px;font-weight:800;color:#ffffff;">
+      Tu acceso a la aplicación
+    </h3>
+
+    <p id="vel-acceso-mensaje"
+       style="margin:0 0 14px 0;font-size:13px;line-height:1.5;color:#cbd5e1;">
+      Inicia sesión y completa tu suscripción en el Paso 1 para habilitar la descarga e instalación de VEL en tus teléfonos.
+    </p>
+
+    <a id="vel-btn-entrar-pwa"
+       href="https://proyecto-vel.pages.dev/"
+       target="_blank"
+       rel="noopener noreferrer"
+       style="display:none;width:100%;box-sizing:border-box;text-align:center;text-decoration:none;padding:13px 16px;border-radius:8px;background:#00cfe8;color:#0b1220;font-size:15px;font-weight:800;letter-spacing:0.02em;margin-bottom:10px;">
+      Entrar a VEL
+    </a>
+
+    <button id="vel-btn-recheck-acceso"
+            type="button"
+            style="display:none;width:100%;padding:10px 14px;border:1px solid #334155;border-radius:8px;background:#111c2e;color:#e2e8f0;font-size:13px;font-weight:600;cursor:pointer;">
+      Ya pagué — Actualizar estado
+    </button>
+
+    <div id="vel-guia-instalacion"
+         style="display:none;margin-top:14px;padding:12px;border-radius:8px;background:#111c2e;border:1px solid #22324c;font-size:12px;line-height:1.5;color:#cbd5e1;">
+      <strong style="color:#ffffff;display:block;margin-bottom:4px;">Cómo instalar VEL en tus teléfonos:</strong>
+      <div>1. Abre este enlace primero desde tu teléfono principal (<strong>VEL CORE</strong>) e instálala con el botón <strong>Instalar VEL</strong> o el menú del navegador (<em>Instalar aplicación</em>).</div>
+      <div>2. Repite desde tu teléfono diario (<strong>VEL MÓVIL</strong>) e instálala como ícono en tu pantalla.</div>
+      <div>3. Desde Opciones dentro de VEL también puedes vincular esta misma cuenta VEL por correo si aún no la asociaste.</div>
+    </div>
+
+    <div style="margin-top:12px;text-align:center;">
+      <a id="vel-link-condiciones"
+         href="https://proyecto-vel.blogspot.com/2026/11/terminos-y-condiciones-y-contrato-de-uso.html"
+         target="_blank"
+         rel="noopener noreferrer"
+         style="font-size:12px;font-weight:600;color:#00cfe8;text-decoration:underline;">
+        Consultar Términos, Condiciones y Contrato de Uso (versión 1.2)
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var CONTRACT_VERSION = '1.2';
+  var CONTRACT_URL = 'https://proyecto-vel.blogspot.com/2026/11/terminos-y-condiciones-y-contrato-de-uso.html';
+  var DEFAULT_VEL_BASE = 'https://proyecto-vel.pages.dev';
+  var PENDING_EMAIL_KEY = 'vel_blogger_pending_email';
+  var FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyAHtyvXUF6gfv1kpOwdDkMrorJlq5pw26A',
+    authDomain: 'proyecto-vel.firebaseapp.com',
+    projectId: 'proyecto-vel',
+    messagingSenderId: '606785327115',
+    appId: '1:606785327115:web:22e0f143078f6dbdd9f70e'
+  };
+
+  var box = document.getElementById('vel-pago-manual-box');
+  var statusEl = document.getElementById('vel-pago-usuario-estado');
+  var accountBadgeEl = document.getElementById('vel-cuenta-badge');
+  var authFormBox = document.getElementById('vel-auth-form-box');
+  var authEmailInput = document.getElementById('vel-auth-email-input');
+  var authSendBtn = document.getElementById('vel-btn-send-link');
+  var authInfoEl = document.getElementById('vel-auth-info');
+  var authErrorEl = document.getElementById('vel-auth-error');
+  var accountSummaryBox = document.getElementById('vel-cuenta-resumen-box');
+  var devicesEl = document.getElementById('vel-cuenta-dispositivos');
+  var signOutBtn = document.getElementById('vel-btn-cerrar-sesion');
+  var toggleBajaBtn = document.getElementById('vel-btn-toggle-baja');
+  var bajaBox = document.getElementById('vel-baja-confirm-box');
+  var bajaInput = document.getElementById('vel-baja-confirm-input');
+  var confirmBajaBtn = document.getElementById('vel-btn-confirmar-baja');
+  var cancelBajaBtn = document.getElementById('vel-btn-cancelar-baja');
+  var bajaFeedbackEl = document.getElementById('vel-baja-feedback');
+
+  var pricingLineEl = document.getElementById('vel-precio-linea');
+  var contractCheckbox = document.getElementById('vel-chk-contrato-v12');
+  var btn = document.getElementById('vel-btn-contratar-mp');
+  var errorEl = document.getElementById('vel-pago-error');
+  var enterBtn = document.getElementById('vel-btn-entrar-pwa');
+  var badgeEl = document.getElementById('vel-acceso-badge');
+  var accessMsgEl = document.getElementById('vel-acceso-mensaje');
+  var recheckBtn = document.getElementById('vel-btn-recheck-acceso');
+  var guideEl = document.getElementById('vel-guia-instalacion');
+
+  if (!box || !statusEl || !contractCheckbox || !btn || !errorEl || !enterBtn || !badgeEl || !accessMsgEl || !recheckBtn || !guideEl) return;
+
+  contractCheckbox.checked = false;
+
+  var velBase = (box.getAttribute('data-vel-base') || DEFAULT_VEL_BASE).replace(/\/+$/, '');
+  var currentUser = null;
+  var isSubmitting = false;
+  var isCheckingAccess = false;
+  var isDeactivating = false;
+  var isAuthBootstrapped = false;
+
+  function showError(message) {
+    errorEl.textContent = message;
+    errorEl.style.display = 'block';
+  }
+
+  function clearError() {
+    errorEl.textContent = '';
+    errorEl.style.display = 'none';
+  }
+
+  function showAuthInfo(message) {
+    if (!authInfoEl) return;
+    authInfoEl.textContent = message;
+    authInfoEl.style.display = message ? 'block' : 'none';
+  }
+
+  function showAuthError(message) {
+    if (!authErrorEl) return;
+    authErrorEl.textContent = message;
+    authErrorEl.style.display = message ? 'block' : 'none';
+  }
+
+  function setButtonEnabled(enabled, label) {
+    btn.disabled = !enabled;
+    btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+    btn.style.opacity = enabled ? '1' : '0.65';
+    if (label) {
+      btn.textContent = label;
+    }
+  }
+
+  function syncActionButtonState() {
+    if (isSubmitting) return;
+    if (!currentUser) {
+      setButtonEnabled(false, 'Inicia sesión para continuar');
+      return;
+    }
+    var checked = Boolean(contractCheckbox.checked);
+    setButtonEnabled(checked, 'ACEPTO Y CONTINUAR');
+  }
+
+  function formatExpiryDate(iso) {
+    if (!iso) return '';
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function setAccessLocked(badgeText, message, showRecheck) {
+    badgeEl.textContent = badgeText;
+    badgeEl.style.background = 'rgba(245,158,11,0.18)';
+    badgeEl.style.color = '#fcd34d';
+    accessMsgEl.textContent = message;
+    enterBtn.style.display = 'none';
+    guideEl.style.display = 'none';
+    recheckBtn.style.display = showRecheck ? 'block' : 'none';
+    syncActionButtonState();
+  }
+
+  function setAccessUnlocked(url, venceEl) {
+    var fecha = formatExpiryDate(venceEl);
+    badgeEl.textContent = fecha ? ('Activo hasta ' + fecha) : 'Mes activo';
+    badgeEl.style.background = 'rgba(16,185,129,0.20)';
+    badgeEl.style.color = '#34d399';
+    accessMsgEl.textContent =
+      'Tu suscripción mensual está activa en Firebase. Ya puedes abrir e instalar VEL en tu VEL CORE y en tu VEL MÓVIL.';
+    enterBtn.setAttribute('href', url || (velBase + '/'));
+    enterBtn.style.display = 'block';
+    guideEl.style.display = 'block';
+    recheckBtn.style.display = 'none';
+    syncActionButtonState();
+  }
+
+  function resolveExistingFirebaseAuth() {
+    if (window.velFirebaseAuth) return window.velFirebaseAuth;
+    if (window.firebaseAuth) return window.firebaseAuth;
+    if (window.firebase && typeof window.firebase.auth === 'function') {
+      if (window.firebase.apps && window.firebase.apps.length > 0) {
+        return window.firebase.auth();
+      }
+    }
+    return null;
+  }
+
+  function loadScriptOnce(src) {
+    return new Promise(function (resolve, reject) {
+      var existing = document.querySelector('script[src="' + src + '"]');
+      if (existing) {
+        existing.addEventListener('load', resolve);
+        existing.addEventListener('error', reject);
+        if (existing.getAttribute('data-loaded') === 'true') resolve();
+        return;
+      }
+      var s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = function () {
+        s.setAttribute('data-loaded', 'true');
+        resolve();
+      };
+      s.onerror = function () {
+        reject(new Error('No se pudo cargar ' + src));
+      };
+      document.head.appendChild(s);
+    });
+  }
+
+  async function ensureFirebaseAuthInstance() {
+    var existing = resolveExistingFirebaseAuth();
+    if (existing) return existing;
+
+    try {
+      if (!window.firebase) {
+        await loadScriptOnce('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
+      }
+      if (!window.firebase || typeof window.firebase.auth !== 'function') {
+        await loadScriptOnce('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js');
+      }
+      if (window.firebase) {
+        if (!window.firebase.apps || window.firebase.apps.length === 0) {
+          window.firebase.initializeApp(FIREBASE_CONFIG);
+        }
+        window.velFirebaseAuth = window.firebase.auth();
+        return window.velFirebaseAuth;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function resolveExistingFirebaseProjectId(authInstance, user) {
+    try {
+      if (authInstance && authInstance.app && authInstance.app.options && authInstance.app.options.projectId) {
+        return String(authInstance.app.options.projectId).trim();
+      }
+      if (user && user.auth && user.auth.app && user.auth.app.options && user.auth.app.options.projectId) {
+        return String(user.auth.app.options.projectId).trim();
+      }
+      if (window.firebase && window.firebase.apps && window.firebase.apps.length > 0) {
+        var opts = window.firebase.apps[0] && window.firebase.apps[0].options;
+        if (opts && opts.projectId) return String(opts.projectId).trim();
+      }
+    } catch (_) {}
+    return FIREBASE_CONFIG.projectId;
+  }
+
+  async function getFreshIdToken(user) {
+    if (!user) return null;
+    if (typeof user.getIdToken === 'function') {
+      return await user.getIdToken(true);
+    }
+    throw new Error('La sesión actual de Firebase no expone getIdToken().');
+  }
+
+  async function loadPublicPricing() {
+    if (!pricingLineEl || !velBase) return;
+    try {
+      var res = await fetch(velBase + '/api/get-pricing', {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!res.ok) return;
+      var data = await res.json();
+      if (data && data.success && data.pricing && typeof data.pricing.monto === 'number') {
+        pricingLineEl.textContent =
+          'Tarifa mensual oficial: ' +
+          data.pricing.monto +
+          ' ' +
+          (data.pricing.moneda || 'ARS') +
+          '. Abona tu mes con Mercado Pago (tarjeta, saldo, Rapipago o Pago Fácil). Antes de ir al pago, lee y acepta el Contrato de Uso VEL versión 1.2.';
+      }
+    } catch (_) {}
+  }
+
+  function renderAccountDevices(devices) {
+    if (!devicesEl) return;
+    if (!Array.isArray(devices) || devices.length === 0) {
+      devicesEl.textContent = 'Aún no hay dispositivos vinculados a esta cuenta. Abre VEL en tu CORE y MÓVIL para vincularlos.';
+      return;
+    }
+    var lines = devices.map(function (d) {
+      var roleLabel = d.role === 'CORE' ? 'VEL CORE' : 'VEL MÓVIL';
+      var statusLabel = d.status === 'paired' ? 'Conectado' : d.status === 'revoked' ? 'Revocado' : 'Registrado';
+      return roleLabel + ' (' + d.deviceId + '): ' + statusLabel;
+    });
+    devicesEl.textContent = 'Dispositivos en esta cuenta — ' + lines.join(' · ');
+  }
+
+  async function syncAccountWithCloudflare(user) {
+    if (!user) return;
+    try {
+      var idToken = await getFreshIdToken(user);
+      if (!idToken) return;
+
+      var regRes = await fetch(velBase + '/api/account', {
+        method: 'POST',
+        mode: 'cors',
+        headers: {
+          'Authorization': 'Bearer ' + idToken,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ action: 'register' })
+      });
+      var regData = await regRes.json().catch(function () { return {}; });
+
+      if (regRes.status === 403 && regData.code === 'ACCOUNT_DEACTIVATED') {
+        if (accountBadgeEl) {
+          accountBadgeEl.textContent = 'Cuenta dada de baja';
+          accountBadgeEl.style.background = 'rgba(239,68,68,0.20)';
+          accountBadgeEl.style.color = '#fca5a5';
+        }
+        statusEl.textContent = 'Esta cuenta VEL fue dada de baja previamente.';
+        statusEl.style.background = '#450a0a';
+        statusEl.style.color = '#fecaca';
+        if (devicesEl) {
+          devicesEl.textContent = 'Cuenta deshabilitada. Las copias locales en VEL CORE no se modificaron.';
+        }
+        return;
+      }
+
+      if (regRes.status === 409 && regData.code === 'DUPLICATE_ACCOUNT_EMAIL') {
+        showError(regData.error || 'Ya existe una cuenta registrada con este correo.');
+        return;
+      }
+
+      if (regData && regData.success) {
+        renderAccountDevices(regData.devices || []);
+        if (accountBadgeEl && regData.account) {
+          var est = regData.account.estado;
+          accountBadgeEl.textContent = est === 'activo' ? 'Suscripción activa' : est === 'pendiente_pago' ? 'Alta lista · sin pago' : String(est || 'Cuenta activa');
+          accountBadgeEl.style.background = est === 'activo' ? 'rgba(16,185,129,0.20)' : 'rgba(0,207,232,0.18)';
+          accountBadgeEl.style.color = est === 'activo' ? '#34d399' : '#00cfe8';
+        }
+      }
+    } catch (_) {
+      if (devicesEl) {
+        devicesEl.textContent = 'No se pudo consultar el listado de dispositivos en Cloudflare en este momento.';
+      }
+    }
+  }
+
+  async function registerContractAcceptanceInFirebase(authInstance, user, idToken) {
+    if (!user || !user.uid) {
+      throw new Error('No se identificó al usuario autenticado en Firebase.');
+    }
+
+    if (
+      window.firebase &&
+      typeof window.firebase.firestore === 'function' &&
+      window.firebase.firestore.FieldValue &&
+      typeof window.firebase.firestore.FieldValue.serverTimestamp === 'function'
+    ) {
+      var db = window.firebase.firestore();
+      var docRef = db
+        .collection('suscriptores')
+        .doc(user.uid)
+        .collection('historial_contratos')
+        .doc(CONTRACT_VERSION);
+
+      var existingSnap = await docRef.get();
+      if (existingSnap && existingSnap.exists) {
+        var existingData = existingSnap.data() || {};
+        if (
+          existingData.uid === user.uid &&
+          existingData.versionContrato === CONTRACT_VERSION &&
+          existingData.aceptado === true &&
+          existingData.fechaAceptacion
+        ) {
+          return existingData;
+        }
+      }
+
+      try {
+        await docRef.set({
+          uid: user.uid,
+          versionContrato: CONTRACT_VERSION,
+          urlContrato: CONTRACT_URL,
+          aceptado: true,
+          fechaAceptacion: window.firebase.firestore.FieldValue.serverTimestamp()
+        });
+      } catch (writeErr) {
+        try {
+          var retrySnap = await docRef.get();
+          if (retrySnap && retrySnap.exists) {
+            var retryData = retrySnap.data() || {};
+            if (
+              retryData.uid === user.uid &&
+              retryData.versionContrato === CONTRACT_VERSION &&
+              retryData.aceptado === true &&
+              retryData.fechaAceptacion
+            ) {
+              return retryData;
+            }
+          }
+        } catch (_) {}
+        throw writeErr;
+      }
+
+      var verifiedSnap = await docRef.get();
+      if (!verifiedSnap || !verifiedSnap.exists) {
+        throw new Error('No se pudo confirmar la aceptación del contrato en Firestore.');
+      }
+      var verifiedData = verifiedSnap.data() || {};
+      if (
+        verifiedData.uid !== user.uid ||
+        verifiedData.versionContrato !== CONTRACT_VERSION ||
+        verifiedData.aceptado !== true ||
+        !verifiedData.fechaAceptacion
+      ) {
+        throw new Error('El registro de aceptación en Firestore no incluyó versión o fecha del servidor válida.');
+      }
+      return verifiedData;
+    }
+
+    var projectId = resolveExistingFirebaseProjectId(authInstance, user);
+    var docPath =
+      'projects/' + encodeURIComponent(projectId) +
+      '/databases/(default)/documents/suscriptores/' + encodeURIComponent(user.uid) +
+      '/historial_contratos/' + encodeURIComponent(CONTRACT_VERSION);
+    var docUrl = 'https://firestore.googleapis.com/v1/' + docPath;
+
+    var existingRes = await fetch(docUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': 'Bearer ' + idToken,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (existingRes.ok) {
+      var existingDoc = await existingRes.json();
+      var ef = existingDoc && existingDoc.fields ? existingDoc.fields : {};
+      if (
+        ef.uid && ef.uid.stringValue === user.uid &&
+        ef.versionContrato && ef.versionContrato.stringValue === CONTRACT_VERSION &&
+        ef.aceptado && ef.aceptado.booleanValue === true &&
+        ef.fechaAceptacion && ef.fechaAceptacion.timestampValue
+      ) {
+        return existingDoc;
+      }
+    }
+
+    var commitUrl =
+      'https://firestore.googleapis.com/v1/projects/' +
+      encodeURIComponent(projectId) +
+      '/databases/(default)/documents:commit';
+
+    var commitRes = await fetch(commitUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + idToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        writes: [
+          {
+            update: {
+              name: docPath,
+              fields: {
+                uid: { stringValue: user.uid },
+                versionContrato: { stringValue: CONTRACT_VERSION },
+                urlContrato: { stringValue: CONTRACT_URL },
+                aceptado: { booleanValue: true }
+              }
+            },
+            updateTransforms: [
+              {
+                fieldPath: 'fechaAceptacion',
+                setToServerValue: 'REQUEST_TIME'
+              }
+            ],
+            currentDocument: { exists: false }
+          }
+        ]
+      })
+    });
+
+    if (!commitRes.ok) {
+      var commitErrPayload = {};
+      try { commitErrPayload = await commitRes.json(); } catch (_) {}
+      throw new Error(
+        (commitErrPayload && commitErrPayload.error && commitErrPayload.error.message) ||
+        ('Firestore rechazó el registro de aceptación (HTTP ' + commitRes.status + ').')
+      );
+    }
+
+    var verifyRes = await fetch(docUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': 'Bearer ' + idToken,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!verifyRes.ok) {
+      throw new Error('No se pudo verificar el registro de aceptación en Firebase.');
+    }
+
+    var verifiedDoc = await verifyRes.json();
+    var vf = verifiedDoc && verifiedDoc.fields ? verifiedDoc.fields : {};
+    if (
+      !vf.uid || vf.uid.stringValue !== user.uid ||
+      !vf.versionContrato || vf.versionContrato.stringValue !== CONTRACT_VERSION ||
+      !vf.aceptado || vf.aceptado.booleanValue !== true ||
+      !vf.fechaAceptacion || !vf.fechaAceptacion.timestampValue
+    ) {
+      throw new Error('La aceptación registrada en Firebase no tiene los datos completos.');
+    }
+
+    return verifiedDoc;
+  }
+
+  async function refreshDownloadAccess(user) {
+    if (!user || isCheckingAccess) return;
+    isCheckingAccess = true;
+    badgeEl.textContent = 'Verificando...';
+    recheckBtn.disabled = true;
+
+    try {
+      var idToken = await getFreshIdToken(user);
+      if (!idToken) throw new Error('Sin token de sesión.');
+
+      var res = await fetch(velBase + '/api/download-package?format=json', {
+        method: 'GET',
+        mode: 'cors',
+        headers: {
+          'Authorization': 'Bearer ' + idToken,
+          'Accept': 'application/json'
+        }
+      });
+
+      var data = {};
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = {};
+      }
+
+      if (res.ok && data.authorized) {
+        var targetUrl = data.downloadUrl && data.downloadUrl.indexOf('http') === 0
+          ? data.downloadUrl
+          : (velBase + '/');
+        setAccessUnlocked(targetUrl, data.venceEl);
+      } else {
+        var statusMsg = data.error || 'Completa tu pago en Mercado Pago para habilitar el acceso a VEL.';
+        setAccessLocked('Pago pendiente', statusMsg, true);
+      }
+    } catch (_) {
+      setAccessLocked('Sin conexión', 'No pudimos verificar tu estado en este momento. Toca actualizar para reintentar.', true);
+    } finally {
+      isCheckingAccess = false;
+      recheckBtn.disabled = false;
+    }
+  }
+
+  function updateAuthUI(user) {
+    currentUser = user || null;
+
+    if (currentUser) {
+      var userEmail = currentUser.email || currentUser.uid;
+      statusEl.textContent = 'Sesión iniciada como: ' + userEmail;
+      statusEl.style.background = '#064e3b';
+      statusEl.style.color = '#a7f3d0';
+      if (authFormBox) authFormBox.style.display = 'none';
+      if (accountSummaryBox) accountSummaryBox.style.display = 'block';
+      showAuthInfo('');
+      showAuthError('');
+      if (!isSubmitting) {
+        clearError();
+        syncActionButtonState();
+      }
+      void syncAccountWithCloudflare(currentUser);
+      void refreshDownloadAccess(currentUser);
+    } else {
+      isSubmitting = false;
+      contractCheckbox.checked = false;
+      clearError();
+      if (accountBadgeEl) {
+        accountBadgeEl.textContent = 'Sin sesión';
+        accountBadgeEl.style.background = 'rgba(245,158,11,0.18)';
+        accountBadgeEl.style.color = '#fcd34d';
+      }
+      statusEl.textContent = 'Inicia sesión con tu correo para administrar tu cuenta VEL, contratar o abrir la app.';
+      statusEl.style.background = '#111c2e';
+      statusEl.style.color = '#fcd34d';
+      if (authFormBox) authFormBox.style.display = 'block';
+      if (accountSummaryBox) accountSummaryBox.style.display = 'none';
+      if (bajaBox) bajaBox.style.display = 'none';
+      setButtonEnabled(false, 'Inicia sesión para continuar');
+      setAccessLocked(
+        'Requiere sesión',
+        'Inicia sesión arriba y completa el Paso 1 para habilitar automáticamente el acceso a VEL.',
+        false
+      );
+    }
+  }
+
+  async function tryCompleteIncomingEmailLink(authInstance) {
+    if (!authInstance || typeof authInstance.isSignInWithEmailLink !== 'function') return;
+    if (!authInstance.isSignInWithEmailLink(window.location.href)) return;
+
+    var storedEmail = '';
+    try {
+      storedEmail = window.localStorage.getItem(PENDING_EMAIL_KEY) || '';
+    } catch (_) {}
+
+    if (!storedEmail) {
+      showAuthInfo('Abre o confirma tu correo electrónico arriba y vuelve a abrir el enlace para finalizar tu ingreso.');
+      return;
+    }
+
+    try {
+      await authInstance.signInWithEmailLink(storedEmail, window.location.href);
+      try { window.localStorage.removeItem(PENDING_EMAIL_KEY); } catch (_) {}
+      try {
+        var cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('apiKey');
+        cleanUrl.searchParams.delete('oobCode');
+        cleanUrl.searchParams.delete('mode');
+        cleanUrl.searchParams.delete('lang');
+        window.history.replaceState({}, '', cleanUrl.toString());
+      } catch (_) {}
+    } catch (err) {
+      showAuthError(err && err.message ? err.message : 'El enlace de acceso expiró o ya fue utilizado.');
+    }
+  }
+
+  function attachAuthListener(authInstance) {
+    if (!authInstance || isAuthBootstrapped) return false;
+    isAuthBootstrapped = true;
+
+    void tryCompleteIncomingEmailLink(authInstance);
+
+    if (typeof authInstance.onAuthStateChanged === 'function') {
+      authInstance.onAuthStateChanged(function (user) {
+        updateAuthUI(user);
+      });
+    } else if (authInstance.currentUser !== undefined) {
+      updateAuthUI(authInstance.currentUser);
+    }
+    return true;
+  }
+
+  if (authFormBox) {
+    authFormBox.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      showAuthError('');
+      showAuthInfo('');
+      var email = authEmailInput ? String(authEmailInput.value || '').trim().toLowerCase() : '';
+      if (!email || email.indexOf('@') < 1) {
+        showAuthError('Ingresa un correo electrónico válido.');
+        return;
+      }
+
+      var authInstance = await ensureFirebaseAuthInstance();
+      if (!authInstance || typeof authInstance.sendSignInLinkToEmail !== 'function') {
+        showAuthError('Firebase Authentication aún no está disponible en esta página.');
+        return;
+      }
+
+      if (authSendBtn) {
+        authSendBtn.disabled = true;
+        authSendBtn.textContent = 'Enviando...';
+      }
+
+      try {
+        try { window.localStorage.setItem(PENDING_EMAIL_KEY, email); } catch (_) {}
+        var continueUrl = window.location.href.split('#')[0];
+        await authInstance.sendSignInLinkToEmail(email, {
+          url: continueUrl,
+          handleCodeInApp: true
+        });
+        showAuthInfo('Enviamos un enlace de acceso único a ' + email + '. Ábrelo desde este navegador para iniciar sesión en Blogger y en VEL con la misma cuenta.');
+      } catch (err) {
+        showAuthError(err && err.message ? err.message : 'No se pudo enviar el enlace de acceso.');
+      } finally {
+        if (authSendBtn) {
+          authSendBtn.disabled = false;
+          authSendBtn.textContent = 'Enviar enlace de acceso';
+        }
+      }
+    });
+  }
+
+  if (signOutBtn) {
+    signOutBtn.addEventListener('click', async function () {
+      var authInstance = resolveExistingFirebaseAuth();
+      if (authInstance && typeof authInstance.signOut === 'function') {
+        await authInstance.signOut();
+      }
+    });
+  }
+
+  if (toggleBajaBtn && bajaBox) {
+    toggleBajaBtn.addEventListener('click', function () {
+      bajaBox.style.display = bajaBox.style.display === 'none' ? 'block' : 'none';
+      if (bajaFeedbackEl) {
+        bajaFeedbackEl.style.display = 'none';
+        bajaFeedbackEl.textContent = '';
+      }
+      if (bajaInput) bajaInput.value = '';
+    });
+  }
+
+  if (cancelBajaBtn && bajaBox) {
+    cancelBajaBtn.addEventListener('click', function () {
+      bajaBox.style.display = 'none';
+    });
+  }
+
+  if (confirmBajaBtn) {
+    confirmBajaBtn.addEventListener('click', async function () {
+      if (isDeactivating || !currentUser) return;
+      var typed = bajaInput ? String(bajaInput.value || '').trim().toUpperCase() : '';
+      if (typed !== 'ELIMINAR CUENTA') {
+        if (bajaFeedbackEl) {
+          bajaFeedbackEl.textContent = 'Debes escribir exactamente ELIMINAR CUENTA para confirmar.';
+          bajaFeedbackEl.style.display = 'block';
+        }
+        return;
+      }
+
+      isDeactivating = true;
+      confirmBajaBtn.disabled = true;
+      confirmBajaBtn.textContent = 'Procesando baja...';
+
+      try {
+        var idToken = await getFreshIdToken(currentUser);
+        if (!idToken) throw new Error('Sesión Firebase no disponible.');
+
+        var res = await fetch(velBase + '/api/account', {
+          method: 'DELETE',
+          mode: 'cors',
+          headers: {
+            'Authorization': 'Bearer ' + idToken,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            confirmText: typed,
+            reason: 'Baja solicitada desde portal Blogger'
+          })
+        });
+
+        var payload = await res.json().catch(function () { return {}; });
+        if (!res.ok || !payload.success) {
+          throw new Error(payload.error || ('No se pudo confirmar la baja en el servidor (HTTP ' + res.status + ').'));
+        }
+
+        if (bajaFeedbackEl) {
+          bajaFeedbackEl.textContent = payload.authAccountDeleted
+            ? 'Cuenta dada de baja y dispositivos revocados correctamente. Tus copias locales en VEL CORE no fueron alteradas.'
+            : 'Cuenta y dispositivos revocados en Firestore. Aviso Auth: ' + (payload.authPropagationError || 'requiere revisión manual en Firebase Auth.');
+          bajaFeedbackEl.style.display = 'block';
+        }
+
+        var authInstance = resolveExistingFirebaseAuth();
+        if (authInstance && typeof authInstance.signOut === 'function') {
+          await authInstance.signOut();
+        }
+      } catch (err) {
+        if (bajaFeedbackEl) {
+          bajaFeedbackEl.textContent = err && err.message ? err.message : 'Error solicitando la baja.';
+          bajaFeedbackEl.style.display = 'block';
+        }
+      } finally {
+        isDeactivating = false;
+        confirmBajaBtn.disabled = false;
+        confirmBajaBtn.textContent = 'Confirmar baja definitiva';
+      }
+    });
+  }
+
+  contractCheckbox.addEventListener('change', function () {
+    clearError();
+    syncActionButtonState();
+  });
+
+  recheckBtn.addEventListener('click', function () {
+    if (currentUser) {
+      void refreshDownloadAccess(currentUser);
+    }
+  });
+
+  btn.addEventListener('click', async function () {
+    if (isSubmitting) return;
+    clearError();
+
+    if (!velBase || velBase.indexOf('https://') !== 0) {
+      showError('La URL base de Cloudflare Pages configurada en el bloque no es válida.');
+      return;
+    }
+
+    var authInstance = resolveExistingFirebaseAuth();
+    var user = (authInstance && authInstance.currentUser) ? authInstance.currentUser : currentUser;
+
+    if (!user) {
+      updateAuthUI(null);
+      showError('No hay una sesión activa de Firebase. Inicia sesión e intenta nuevamente.');
+      return;
+    }
+
+    if (!contractCheckbox.checked) {
+      showError('Debes marcar la casilla de aceptación del Contrato de Uso VEL versión 1.2 para continuar.');
+      syncActionButtonState();
+      return;
+    }
+
+    isSubmitting = true;
+    setButtonEnabled(false, 'Registrando aceptación en Firebase...');
+
+    try {
+      var idToken = await getFreshIdToken(user);
+      if (!idToken) {
+        throw new Error('No se pudo obtener el token de autenticación de Firebase.');
+      }
+
+      try {
+        await registerContractAcceptanceInFirebase(authInstance, user, idToken);
+      } catch (acceptErr) {
+        var acceptMsg = acceptErr && acceptErr.message
+          ? acceptErr.message
+          : 'Error desconocido al guardar la aceptación en Firebase.';
+        throw new Error(
+          'No se pudo registrar la aceptación del Contrato de Uso VEL versión 1.2 en Firebase (' +
+            acceptMsg +
+            '). Por seguridad, no se redirigió a Mercado Pago.'
+        );
+      }
+
+      setButtonEnabled(false, 'Generando enlace de pago en Mercado Pago...');
+
+      var endpoint = velBase + '/api/create-preference';
+      var response = await fetch(endpoint, {
+        method: 'POST',
+        mode: 'cors',
+        headers: {
+          'Authorization': 'Bearer ' + idToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      });
+
+      var payload = {};
+      try {
+        payload = await response.json();
+      } catch (_) {
+        payload = {};
+      }
+
+      if (!response.ok || !payload.success || !payload.preference_id || !payload.init_point) {
+        if (response.status === 503 && payload.pendingConfig) {
+          throw new Error(
+            payload.error || 'El sistema de pagos en Cloudflare tiene credenciales pendientes de configuración.'
+          );
+        }
+        throw new Error(
+          payload.error || ('Error al iniciar pago (HTTP ' + response.status + ').')
+        );
+      }
+
+      if (typeof payload.init_point !== 'string' || payload.init_point.indexOf('https://') !== 0) {
+        throw new Error('El servidor devolvió una URL de pago inválida.');
+      }
+
+      window.location.href = payload.init_point;
+    } catch (err) {
+      showError(err && err.message ? err.message : 'No se pudo completar la operación.');
+      isSubmitting = false;
+      syncActionButtonState();
+    }
+  });
+
+  void loadPublicPricing();
+  ensureFirebaseAuthInstance().then(function (authInstance) {
+    if (!attachAuthListener(authInstance)) {
+      updateAuthUI(null);
+    }
+  });
+})();
+</script>
